@@ -11,10 +11,10 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.yarn.webapp.hamlet.Hamlet;
+
 import java.io.IOException;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.ArrayList;
+import java.util.*;
 
 public class SpatialJoin {
 
@@ -48,11 +48,12 @@ public class SpatialJoin {
                     String wY2 = filterWindow[3];
                     if ((Integer.parseInt(x) >= Integer.parseInt(wX)) && (Integer.parseInt(x) <= Integer.parseInt(wX2))
                             && (Integer.parseInt(y) >= Integer.parseInt(wY)) && (Integer.parseInt(y) <= Integer.parseInt(wY2))){
-                        context.write(new Text(x + "," + y), new Text("point"));
+                        context.write(new Text(x), new Text("point" + y));
                     }
                 }
                 else{
-                    context.write(new Text(x + "," + y), new Text("point"));
+                    context.write(new Text(x), new Text("point" + y));
+                    System.out.println("Mapped Point");
                 }
 
             }
@@ -67,13 +68,30 @@ public class SpatialJoin {
                 Integer w1 = Integer.parseInt(w);
                 Integer y1 = Integer.parseInt(y);
                 Integer h1 = Integer.parseInt(h);
-                for (Integer i = x1; i<=(x1 + w1); i++){
-                    for (Integer j = y1; j<=(y1 + h1); j++){
-                        context.write(new Text(i + "," + j), new Text("rect" + r + "," + x
-                        + "," + y + "," + w + "," + h));
+                if (!window.isEmpty()) {
+                    String[] filterWindow = window.split(",");
+                    String wX = filterWindow[0];
+                    String wY = filterWindow[1];
+                    String wX2 = filterWindow[2];
+                    String wY2 = filterWindow[3];
+                    for (Integer i = x1; i <= (x1 + w1); i++) {
+                            if (((i >= Integer.parseInt(wX)) && (i <= Integer.parseInt(wX2)))      //if i,j is within the window...write that point with that rectangle # as the value
+                                    && (((y1 >= Integer.parseInt(wY)) && (y1 <= Integer.parseInt(wY2))) ||
+                                    ((y1 + h1 >= Integer.parseInt(wY)) && (y1 + h1 <= Integer.parseInt(wY2))))) {
+                                context.write(new Text(String.valueOf(i)), new Text("rect" + r + "," + y
+                                        + "," + h));
+                        }
                     }
+                    r++;  //next rectangle
                 }
-                r++;
+                else {
+                    for (Integer i = x1; i <= (x1 + w1); i++) {
+                            context.write(new Text(String.valueOf(i)), new Text("rect" + r + "," + y
+                                    + "," + h));
+                        System.out.println("Mapped Rectangle");
+                    }
+                    r++;
+                }
             }
         }
     }
@@ -84,20 +102,44 @@ public class SpatialJoin {
         protected void reduce(Text key, Iterable<Text> values, Context context)
                 throws IOException, InterruptedException {
 
-            LinkedList<String> rectangles = new LinkedList<>();
-            boolean isPoint = false;
+            Map<Integer, LinkedList<String>> map = new HashMap<>();
+            LinkedList<String> points = new LinkedList<>();
             for(Text text : values) {    //for each value given an x,y pair
                 String value = text.toString();
-                if (value.startsWith("point"))  //if its from points
-                    isPoint = true;
-                else if (value.startsWith("rect")) {   //if its from rectangles
+                if (value.startsWith("point")) {  //if its from points
+                    String pointInfo = value.substring(5);
+                    points.add(pointInfo);
+                    System.out.println("Reducing point");
+                } else if (value.startsWith("rect")) {   //if its from rectangles
                     String rectInfo = value.substring(4);  //take the info
-                    rectangles.add(rectInfo);
+                    String[] split = rectInfo.split(",");
+                    Integer yValue = Integer.parseInt(split[1]);
+                    Integer hValue = Integer.parseInt(split[2]);
+                    System.out.println("Reducing rect");
+                    for (Integer i = yValue; i <= (yValue + hValue); i++) {
+                        if (map.containsKey(i)){
+                            LinkedList<String> mapValues = map.get(i);
+                            mapValues.add(rectInfo);
+                            map.put(i, mapValues);
+                        }
+                        else{
+                            LinkedList<String> mapValues = new LinkedList<String>();
+                            mapValues.add(rectInfo);
+                            map.put(i, mapValues);
+                        }
+
+                    }
                 }
             }
-            if (isPoint == true) {
-                for (String aRect: rectangles) {
-                    context.write(new Text(aRect), key);
+            if (!points.isEmpty()) {
+                for (String aPoint: points) { //for each y value
+                    if (map.containsKey(Integer.parseInt(aPoint))){
+                        LinkedList<String> rectangles = map.get(Integer.parseInt(aPoint));
+                        for (String aRect: rectangles){
+                            System.out.println("Reduced");
+                            context.write(new Text(aRect), new Text(key + ", " + aPoint));
+                        }
+                    }
                 }
             }
         }
@@ -131,3 +173,4 @@ public class SpatialJoin {
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
 }
+
