@@ -60,7 +60,7 @@ T5 = T4.groupBy(T4["CustID"].alias("CustID")).agg(count(T4["TransID"]).alias("Tr
 T6 = T5.join(T3, T5["CustID"] == T3["CustID"]).select((T5["CustID"]), (T5["TransactionsCount"].alias("Count_T5")), 
                 (T3["TransactionsCount"].alias("Count_T3"))).where((T5["TransactionsCount"] * 5) < T3["TransactionsCount"])
 #8. Report back T6 to the client side
-#join does not return anything because there are no
+#join does not return anything because there are no instances where the condition is true
 T6.show()
 
 
