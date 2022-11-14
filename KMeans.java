@@ -28,6 +28,7 @@ public class KMeans {
     //hashmap of the 30 centroids
     static Map<IntWritable, Text> centroids;
 
+    //retrieving the pre-made centroids dataset
     static {
         try {
             centroids = getCentroids("hdfs://localhost:9000/cs585/K.csv");
@@ -36,7 +37,13 @@ public class KMeans {
         }
     }
 
-//create the hashmap of the centroids using the csv stored in hdfs
+
+    /**
+     * Create the hashmap of the centroids using the csv stored in hdfs
+     * @param hdfsPath the location of the file
+     * @return hashmap of centroid id's and (x,y) locations
+     * @throws IOException
+     */
     public static Map<IntWritable, Text> getCentroids(String hdfsPath) throws IOException {
         Map<IntWritable, Text> map = new HashMap<>();
 
@@ -47,14 +54,14 @@ public class KMeans {
         BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(fsDataInputStream));
 
         String line;
-        int centroid_id = 1;
+        int centroid_id = 1; //id counter
         while ((line = bufferedReader.readLine()) != null) {
             String[] split = line.split(",");
             String xVal = split[0].replace("\"", ""); //remove quotes
             int x = Integer.parseInt(xVal);
-            String yVal = split[1].replace("\"", ""); //remove quotes
+            String yVal = split[1].replace("\"", "");
             int y = Integer.parseInt(yVal);
-            map.put(new IntWritable(centroid_id), new Text(x + "," + y));
+            map.put(new IntWritable(centroid_id), new Text(x + "," + y));  //add to hashmap
             centroid_id++;
         }
         bufferedReader.close();
@@ -63,6 +70,10 @@ public class KMeans {
         return map;
     }
 
+    /**
+     * Mapper for KMeans algorithm. Takes in points for the point dataset. Outputs the id of the closest centroid
+     * as the key and the (x,y) of the point as the value.
+     */
     public static class KMeansMapper
             extends Mapper<LongWritable, Text, Text, Text> {
         @Override
@@ -73,17 +84,18 @@ public class KMeans {
 
             String line = value.toString();
             String[] split = line.split(",");
-            if (filePath.contains("P.csv")) {                               //if from Points csv
+            if (filePath.contains("P.csv")) {
                 String x = split[0].replace("\"", "");
                 String y = split[1].replace("\"", "");
                 Text centroid_id = new Text();
                 double min_distance = Double.POSITIVE_INFINITY;
                 double distance;
                 String id = "";
-                for (IntWritable aKey : centroids.keySet()) {               //go through each centroid and find closest one
+                for (IntWritable aKey : centroids.keySet()) {               //go through each centroid and find the closest one
                     String[] centroid_coordinates = centroids.get(aKey).toString().split(",");
                     double x_centroid = Double.parseDouble(centroid_coordinates[0]);
                     double y_centroid = Double.parseDouble(centroid_coordinates[1]);
+                    //distance to centroid
                     distance = Math.sqrt(Math.pow((Double.parseDouble(x) - x_centroid), 2) + Math.pow((Double.parseDouble(y) - y_centroid), 2));
                     if (distance < min_distance) {               //if centroid is minimum distance to point
                         min_distance = distance;
@@ -96,36 +108,15 @@ public class KMeans {
         }
     }
 
-    //Need to fix this...not working correctly right now
-//    public static class KMeansCombiner
-//            extends Reducer<Text, Text, Text, Text> {
-//        @Override
-//        protected void reduce(Text key, Iterable<Text> values, Context context)
-//                throws IOException, InterruptedException {
-//            System.out.println("Combine");
-//            Text partialSumsCount = new Text();
-//            double x_sum = 0.0;
-//            double y_sum = 0.0;
-//            int count = 0;
-//            for (Text val : values) {
-//                String[] pointCoordinates = val.toString().split(",");
-//                String x = pointCoordinates[0].replace("\"", "");
-//                String y = pointCoordinates[1].replace("\"", "");
-//                x_sum += Double.parseDouble(x);
-//                y_sum += Double.parseDouble(y);
-//                count ++;
-//            }
-//            partialSumsCount.set(x_sum + "," + y_sum + "," + count);
-//            System.out.println(partialSumsCount);
-//            context.write(key, partialSumsCount);
-//        }
-//    }
+    /**
+     *Reducer for KMeans algorithm. Takes in <centroidID, (x,y) of point>. Outputs the updated centroid locations.
+     *Also updates the hashmap for next iteration.
+     */
     public static class KMeansReducer
             extends Reducer<Text, Text, Text, NullWritable> {
         @Override
         protected void reduce(Text key, Iterable<Text> values, Context context)
                 throws IOException, InterruptedException {
-            System.out.println("Reduce");
             Text newCentroid = new Text();
             double x_sum = 0.0;
             double y_sum = 0.0;
@@ -134,13 +125,10 @@ public class KMeans {
                 String[] partialSumsCount = val.toString().split(",");
                 String x = partialSumsCount[0].replace("\"", "");
                 String y = partialSumsCount[1].replace("\"", "");
-                //String c = partialSumsCount[2].replace("\"", "");
                 x_sum += Double.parseDouble(x);
                 y_sum += Double.parseDouble(y);
-                //count += Double.parseDouble(c);
                 count ++;
             }
-            System.out.println(x_sum + "," + y_sum + "," + count);
             String updatedCentroid =  x_sum/count + ", " + y_sum/count;  //takes average of x and y coordinates to make new center
             newCentroid.set(updatedCentroid);
             context.write(newCentroid, NullWritable.get());             //write new centroids position
@@ -156,19 +144,17 @@ public class KMeans {
             if ((xOldCentroid == updatedX) && (yOldCentroid == updatedY)){      //see if centroids positions are still changing
                 kDidntChange ++;
             }
-            System.out.println(oldCentroidCoordinates[0] + ", " + oldCentroidCoordinates[1] + ", " + newCentroid);
             centroids.replace(centroidID,newCentroid);             //update hashmap to reflect new centroid position
         }
     }
 
     public void debug(String[] args) throws Exception {
         Configuration conf = new Configuration();
-        for(int i = 1; i <= 6; i++){
-            if (kDidntChange < 30){
+        for(int i = 1; i <= 6; i++){  //max of 6 iterations
+            if (kDidntChange < 30){  //check if centroids are changing
                 Job job = Job.getInstance(conf, "KMeans");
                 job.setJarByClass(KMeans.class);
                 job.setMapperClass(KMeansMapper.class);
-                //job.setCombinerClass(KMeansCombiner.class);
                 job.setReducerClass(KMeansReducer.class);
                 job.setMapOutputKeyClass(Text.class);
                 job.setMapOutputValueClass(Text.class);
@@ -179,7 +165,7 @@ public class KMeans {
                 job.waitForCompletion(true);
             }
             System.out.println(kDidntChange + ", " + i);
-            kDidntChange = 0;
+            kDidntChange = 0; //reset for next iteration
         }
     }
 }
